@@ -1,0 +1,599 @@
+{
+  "workflows": [
+    {
+      "name": "Boiler Monitoring - Real-time Alerts",
+      "description": "Fetch boiler data every 5 minutes, run ML predictions, send alerts if thresholds exceeded",
+      "workflow": {
+        "nodes": [
+          {
+            "parameters": {
+              "rule": {
+                "interval": [
+                  {
+                    "field": "minutes",
+                    "minutesInterval": 5
+                  }
+                ]
+              }
+            },
+            "name": "Every 5 minutes",
+            "type": "n8n-nodes-base.scheduleTrigger",
+            "typeVersion": 1,
+            "position": [250, 300],
+            "id": "node-1"
+          },
+          {
+            "parameters": {
+              "url": "={{$env.BACKEND_URL}}/api/boiler/current",
+              "authentication": "predefinedCredentialType",
+              "nodeCredentialType": "httpHeaderAuth",
+              "options": {}
+            },
+            "name": "Fetch Current Boiler Data",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 3,
+            "position": [450, 300],
+            "id": "node-2",
+            "credentials": {
+              "httpHeaderAuth": {
+                "id": "1",
+                "name": "Backend API Key"
+              }
+            }
+          },
+          {
+            "parameters": {
+              "url": "={{$env.ML_API_URL}}/predict/all",
+              "method": "POST",
+              "sendBody": true,
+              "bodyParameters": {
+                "parameters": [
+                  {
+                    "name": "coal_flow",
+                    "value": "={{$json.coalFlow}}"
+                  },
+                  {
+                    "name": "biomass_flow",
+                    "value": "={{$json.biomassFlow}}"
+                  },
+                  {
+                    "name": "steam_temp",
+                    "value": "={{$json.steamTemp}}"
+                  },
+                  {
+                    "name": "drum_pressure",
+                    "value": "={{$json.drumPressure}}"
+                  },
+                  {
+                    "name": "o2_level",
+                    "value": "={{$json.o2Level}}"
+                  }
+                ]
+              },
+              "options": {}
+            },
+            "name": "Get ML Predictions",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 3,
+            "position": [650, 300],
+            "id": "node-3"
+          },
+          {
+            "parameters": {
+              "conditions": {
+                "options": {
+                  "combineOperation": "any"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.efficiency}}",
+                    "rightValue": 85,
+                    "operator": {
+                      "type": "number",
+                      "operation": "smaller"
+                    }
+                  },
+                  {
+                    "leftValue": "={{$json.co2Emission}}",
+                    "rightValue": 800,
+                    "operator": {
+                      "type": "number",
+                      "operation": "larger"
+                    }
+                  },
+                  {
+                    "leftValue": "={{$json.status}}",
+                    "rightValue": "critical",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              }
+            },
+            "name": "Check Alert Thresholds",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 1,
+            "position": [850, 300],
+            "id": "node-4"
+          },
+          {
+            "parameters": {
+              "chatId": "={{$env.TELEGRAM_CHAT_ID}}",
+              "text": "=⚠️ **BOILER ALERT**\n\n📊 **Current Status:**\n• Efficiency: {{$json.efficiency.toFixed(1)}}% (Target: >85%)\n• CO₂ Emission: {{$json.co2Emission.toFixed(0)}} mg/Nm³\n• Status: {{$json.status.toUpperCase()}}\n\n🔥 **Operating Parameters:**\n• Coal Flow: {{$json.coalFlow.toFixed(1)}} ton/hr\n• Biomass Flow: {{$json.biomassFlow.toFixed(1)}} ton/hr\n• Cofiring Ratio: {{$json.cofringRatio.toFixed(1)}}%\n• Steam Temp: {{$json.steamTemp.toFixed(0)}}°C\n\n🤖 **AI Recommendation (LightGBM):**\n{{$node[\"Get ML Predictions\"].json[2].model}}: Optimize to {{$node[\"Get ML Predictions\"].json[2].optimal_cofiring_ratio.toFixed(1)}}% biomass\nPredicted Efficiency: {{$node[\"Get ML Predictions\"].json[2].predicted_efficiency.toFixed(1)}}%\n\n⏰ Time: {{$now.format('DD/MM/YYYY HH:mm:ss')}}\n\n👉 Check dashboard for details",
+              "additionalFields": {}
+            },
+            "name": "Send Telegram Alert",
+            "type": "n8n-nodes-base.telegram",
+            "typeVersion": 1,
+            "position": [1050, 200],
+            "id": "node-5",
+            "credentials": {
+              "telegramApi": {
+                "id": "2",
+                "name": "Telegram Bot"
+              }
+            }
+          },
+          {
+            "parameters": {
+              "fromEmail": "noreply@boiler-system.com",
+              "toEmail": "={{$env.ALERT_EMAIL}}",
+              "subject": "=🚨 Boiler Performance Alert - Action Required",
+              "emailType": "html",
+              "message": "=<html>\n<head>\n  <style>\n    body { font-family: Arial, sans-serif; }\n    .header { background: linear-gradient(135deg, #f97316, #ea580c); color: white; padding: 20px; }\n    .content { padding: 20px; }\n    .metric { background: #f3f4f6; padding: 15px; margin: 10px 0; border-radius: 8px; }\n    .critical { border-left: 4px solid #dc2626; }\n    .warning { border-left: 4px solid #f59e0b; }\n    .footer { background: #e5e7eb; padding: 15px; text-align: center; font-size: 12px; }\n  </style>\n</head>\n<body>\n  <div class=\"header\">\n    <h1>⚠️ Boiler Performance Alert</h1>\n    <p>Status: {{$json.status.toUpperCase()}}</p>\n  </div>\n  \n  <div class=\"content\">\n    <h2>Current Performance Metrics</h2>\n    \n    <div class=\"metric {{$json.efficiency < 85 ? 'critical' : 'warning'}}\">\n      <strong>Efficiency:</strong> {{$json.efficiency.toFixed(1)}}%<br>\n      <small>Target: >85%</small>\n    </div>\n    \n    <div class=\"metric {{$json.co2Emission > 800 ? 'critical' : 'warning'}}\">\n      <strong>CO₂ Emission:</strong> {{$json.co2Emission.toFixed(0)}} mg/Nm³<br>\n      <small>Target: <800 mg/Nm³</small>\n    </div>\n    \n    <h2>Operating Parameters</h2>\n    <ul>\n      <li>Coal Flow: {{$json.coalFlow.toFixed(1)}} ton/hr</li>\n      <li>Biomass Flow: {{$json.biomassFlow.toFixed(1)}} ton/hr</li>\n      <li>Cofiring Ratio: {{$json.cofringRatio.toFixed(1)}}%</li>\n      <li>Steam Temperature: {{$json.steamTemp.toFixed(0)}}°C</li>\n      <li>Drum Pressure: {{$json.drumPressure.toFixed(1)}} bar</li>\n    </ul>\n    \n    <h2>🤖 AI Recommendations</h2>\n    <p><strong>Best Model: LightGBM (95.2% accuracy)</strong></p>\n    <ul>\n      <li>Optimize cofiring ratio to {{$node[\"Get ML Predictions\"].json[2].optimal_cofiring_ratio.toFixed(1)}}%</li>\n      <li>Expected efficiency: {{$node[\"Get ML Predictions\"].json[2].predicted_efficiency.toFixed(1)}}%</li>\n      <li>Projected CO₂: {{$node[\"Get ML Predictions\"].json[2].predicted_co2.toFixed(0)}} mg/Nm³</li>\n    </ul>\n    \n    <p><strong>Action Required:</strong> Please review and adjust operating parameters.</p>\n  </div>\n  \n  <div class=\"footer\">\n    <p>Boiler Cofiring Monitoring System</p>\n    <p>Timestamp: {{$now.format('DD/MM/YYYY HH:mm:ss')}}</p>\n  </div>\n</body>\n</html>",
+              "options": {}
+            },
+            "name": "Send Email Alert",
+            "type": "n8n-nodes-base.emailSend",
+            "typeVersion": 2,
+            "position": [1050, 400],
+            "id": "node-6",
+            "credentials": {
+              "smtp": {
+                "id": "3",
+                "name": "SMTP Account"
+              }
+            }
+          },
+          {
+            "parameters": {
+              "url": "={{$env.SLACK_WEBHOOK_URL}}",
+              "method": "POST",
+              "sendBody": true,
+              "bodyParameters": {
+                "parameters": [
+                  {
+                    "name": "text",
+                    "value": "=🚨 Boiler Alert"
+                  },
+                  {
+                    "name": "blocks",
+                    "value": "=[{\"type\":\"header\",\"text\":{\"type\":\"plain_text\",\"text\":\"⚠️ Boiler Performance Alert\"}},{\"type\":\"section\",\"fields\":[{\"type\":\"mrkdwn\",\"text\":\"*Efficiency:*\\n{{$json.efficiency.toFixed(1)}}%\"},{\"type\":\"mrkdwn\",\"text\":\"*CO₂:*\\n{{$json.co2Emission.toFixed(0)}} mg/Nm³\"},{\"type\":\"mrkdwn\",\"text\":\"*Status:*\\n{{$json.status.toUpperCase()}}\"},{\"type\":\"mrkdwn\",\"text\":\"*Time:*\\n{{$now.format('HH:mm:ss')}}\"}]},{\"type\":\"section\",\"text\":{\"type\":\"mrkdwn\",\"text\":\"*AI Recommendation:* Optimize to {{$node['Get ML Predictions'].json[2].optimal_cofiring_ratio.toFixed(1)}}% biomass ratio\"}}]"
+                  }
+                ]
+              },
+              "options": {}
+            },
+            "name": "Send Slack Notification",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 3,
+            "position": [1050, 300],
+            "id": "node-7"
+          },
+          {
+            "parameters": {
+              "url": "={{$env.BACKEND_URL}}/api/alarms",
+              "method": "POST",
+              "sendBody": true,
+              "bodyParameters": {
+                "parameters": [
+                  {
+                    "name": "severity",
+                    "value": "={{$json.status === 'critical' ? 'critical' : 'warning'}}"
+                  },
+                  {
+                    "name": "message",
+                    "value": "=Efficiency {{$json.efficiency < 85 ? 'below threshold' : 'normal'}}, CO₂ {{$json.co2Emission > 800 ? 'above limit' : 'normal'}}"
+                  },
+                  {
+                    "name": "parameter",
+                    "value": "System"
+                  },
+                  {
+                    "name": "value",
+                    "value": "=Eff: {{$json.efficiency.toFixed(1)}}%, CO₂: {{$json.co2Emission.toFixed(0)}}"
+                  }
+                ]
+              },
+              "options": {}
+            },
+            "name": "Log to Database",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 3,
+            "position": [1250, 300],
+            "id": "node-8"
+          }
+        ],
+        "connections": {
+          "Every 5 minutes": {
+            "main": [
+              [
+                {
+                  "node": "Fetch Current Boiler Data",
+                  "type": "main",
+                  "index": 0
+                }
+              ]
+            ]
+          },
+          "Fetch Current Boiler Data": {
+            "main": [
+              [
+                {
+                  "node": "Get ML Predictions",
+                  "type": "main",
+                  "index": 0
+                }
+              ]
+            ]
+          },
+          "Get ML Predictions": {
+            "main": [
+              [
+                {
+                  "node": "Check Alert Thresholds",
+                  "type": "main",
+                  "index": 0
+                }
+              ]
+            ]
+          },
+          "Check Alert Thresholds": {
+            "main": [
+              [
+                {
+                  "node": "Send Telegram Alert",
+                  "type": "main",
+                  "index": 0
+                },
+                {
+                  "node": "Send Slack Notification",
+                  "type": "main",
+                  "index": 0
+                },
+                {
+                  "node": "Send Email Alert",
+                  "type": "main",
+                  "index": 0
+                }
+              ],
+              []
+            ]
+          },
+          "Send Telegram Alert": {
+            "main": [
+              [
+                {
+                  "node": "Log to Database",
+                  "type": "main",
+                  "index": 0
+                }
+              ]
+            ]
+          },
+          "Send Slack Notification": {
+            "main": [
+              [
+                {
+                  "node": "Log to Database",
+                  "type": "main",
+                  "index": 0
+                }
+              ]
+            ]
+          },
+          "Send Email Alert": {
+            "main": [
+              [
+                {
+                  "node": "Log to Database",
+                  "type": "main",
+                  "index": 0
+                }
+              ]
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "Daily ML Model Retraining",
+      "description": "Retrain all ML models daily at 2 AM using latest historical data",
+      "workflow": {
+        "nodes": [
+          {
+            "parameters": {
+              "rule": {
+                "interval": [
+                  {
+                    "field": "cronExpression",
+                    "expression": "0 2 * * *"
+                  }
+                ]
+              }
+            },
+            "name": "Daily at 2 AM",
+            "type": "n8n-nodes-base.scheduleTrigger",
+            "typeVersion": 1,
+            "position": [250, 300],
+            "id": "node-1"
+          },
+          {
+            "parameters": {
+              "url": "={{$env.BACKEND_URL}}/api/boiler/history?days=30",
+              "method": "GET",
+              "authentication": "predefinedCredentialType",
+              "nodeCredentialType": "httpHeaderAuth",
+              "options": {}
+            },
+            "name": "Fetch Training Data (30 days)",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 3,
+            "position": [450, 300],
+            "id": "node-2"
+          },
+          {
+            "parameters": {
+              "url": "={{$env.ML_API_URL}}/retrain/lightgbm",
+              "method": "POST",
+              "options": {
+                "timeout": 600000
+              }
+            },
+            "name": "Retrain LightGBM",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 3,
+            "position": [650, 200],
+            "id": "node-3"
+          },
+          {
+            "parameters": {
+              "url": "={{$env.ML_API_URL}}/retrain/ann",
+              "method": "POST",
+              "options": {
+                "timeout": 600000
+              }
+            },
+            "name": "Retrain ANN",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 3,
+            "position": [650, 300],
+            "id": "node-4"
+          },
+          {
+            "parameters": {
+              "url": "={{$env.ML_API_URL}}/retrain/rsm",
+              "method": "POST",
+              "options": {
+                "timeout": 600000
+              }
+            },
+            "name": "Retrain RSM",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 3,
+            "position": [650, 400],
+            "id": "node-5"
+          },
+          {
+            "parameters": {
+              "mode": "combine",
+              "combinationMode": "mergeByPosition"
+            },
+            "name": "Merge Results",
+            "type": "n8n-nodes-base.merge",
+            "typeVersion": 2,
+            "position": [850, 300],
+            "id": "node-6"
+          },
+          {
+            "parameters": {
+              "chatId": "={{$env.TELEGRAM_CHAT_ID}}",
+              "text": "=✅ **Daily ML Retraining Complete**\n\n🤖 **Models Updated:**\n• LightGBM: {{$node[\"Retrain LightGBM\"].json.accuracy}}% accuracy\n• ANN: {{$node[\"Retrain ANN\"].json.accuracy}}% accuracy\n• RSM: {{$node[\"Retrain RSM\"].json.accuracy}}% accuracy\n\n📊 **Training Data:**\n• Period: Last 30 days\n• Samples: {{$node[\"Fetch Training Data (30 days)\"].json.length}} records\n\n⏰ Completed: {{$now.format('DD/MM/YYYY HH:mm:ss')}}\n\n✨ Models are now ready for production use!"
+            },
+            "name": "Notify Success",
+            "type": "n8n-nodes-base.telegram",
+            "typeVersion": 1,
+            "position": [1050, 300],
+            "id": "node-7"
+          },
+          {
+            "parameters": {
+              "chatId": "={{$env.TELEGRAM_CHAT_ID}}",
+              "text": "=❌ **ML Retraining Failed**\n\nError: {{$json.error}}\n\nTime: {{$now.format('DD/MM/YYYY HH:mm:ss')}}\n\nPlease check logs and retry manually."
+            },
+            "name": "Notify Error",
+            "type": "n8n-nodes-base.telegram",
+            "typeVersion": 1,
+            "position": [850, 500],
+            "id": "node-8"
+          }
+        ],
+        "connections": {
+          "Daily at 2 AM": {
+            "main": [
+              [
+                {
+                  "node": "Fetch Training Data (30 days)",
+                  "type": "main",
+                  "index": 0
+                }
+              ]
+            ]
+          },
+          "Fetch Training Data (30 days)": {
+            "main": [
+              [
+                {
+                  "node": "Retrain LightGBM",
+                  "type": "main",
+                  "index": 0
+                },
+                {
+                  "node": "Retrain ANN",
+                  "type": "main",
+                  "index": 0
+                },
+                {
+                  "node": "Retrain RSM",
+                  "type": "main",
+                  "index": 0
+                }
+              ]
+            ]
+          },
+          "Retrain LightGBM": {
+            "main": [
+              [
+                {
+                  "node": "Merge Results",
+                  "type": "main",
+                  "index": 0
+                }
+              ]
+            ]
+          },
+          "Retrain ANN": {
+            "main": [
+              [
+                {
+                  "node": "Merge Results",
+                  "type": "main",
+                  "index": 1
+                }
+              ]
+            ]
+          },
+          "Retrain RSM": {
+            "main": [
+              [
+                {
+                  "node": "Merge Results",
+                  "type": "main",
+                  "index": 2
+                }
+              ]
+            ]
+          },
+          "Merge Results": {
+            "main": [
+              [
+                {
+                  "node": "Notify Success",
+                  "type": "main",
+                  "index": 0
+                }
+              ]
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "Weekly Performance Report",
+      "description": "Generate and send weekly performance report every Monday at 8 AM",
+      "workflow": {
+        "nodes": [
+          {
+            "parameters": {
+              "rule": {
+                "interval": [
+                  {
+                    "field": "cronExpression",
+                    "expression": "0 8 * * 1"
+                  }
+                ]
+              }
+            },
+            "name": "Every Monday 8 AM",
+            "type": "n8n-nodes-base.scheduleTrigger",
+            "typeVersion": 1,
+            "position": [250, 300],
+            "id": "node-1"
+          },
+          {
+            "parameters": {
+              "url": "={{$env.BACKEND_URL}}/api/boiler/stats?period=week",
+              "method": "GET"
+            },
+            "name": "Get Weekly Stats",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 3,
+            "position": [450, 300],
+            "id": "node-2"
+          },
+          {
+            "parameters": {
+              "fromEmail": "reports@boiler-system.com",
+              "toEmail": "management@company.com",
+              "subject": "=📊 Weekly Boiler Performance Report - {{$now.format('DD/MM/YYYY')}}",
+              "emailType": "html",
+              "message": "=<html><body><h1>Weekly Performance Report</h1><p>Average Efficiency: {{$json.avgEfficiency}}%</p><p>Total Production: {{$json.totalProduction}} MWh</p></body></html>"
+            },
+            "name": "Send Report Email",
+            "type": "n8n-nodes-base.emailSend",
+            "typeVersion": 2,
+            "position": [650, 300],
+            "id": "node-3"
+          }
+        ],
+        "connections": {
+          "Every Monday 8 AM": {
+            "main": [
+              [
+                {
+                  "node": "Get Weekly Stats",
+                  "type": "main",
+                  "index": 0
+                }
+              ]
+            ]
+          },
+          "Get Weekly Stats": {
+            "main": [
+              [
+                {
+                  "node": "Send Report Email",
+                  "type": "main",
+                  "index": 0
+                }
+              ]
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "setup_instructions": {
+    "step_1": "Install n8n: npm install -g n8n OR docker run -it --rm --name n8n -p 5678:5678 n8nio/n8n",
+    "step_2": "Open n8n UI: http://localhost:5678",
+    "step_3": "Import workflows: Click 'Import from File' and select this JSON",
+    "step_4": "Configure credentials in n8n UI",
+    "step_5": "Set environment variables",
+    "step_6": "Activate workflows"
+  },
+  "required_credentials": {
+    "httpHeaderAuth": "For backend API authentication (Bearer token)",
+    "telegramApi": "Telegram Bot Token from @BotFather",
+    "smtp": "Email SMTP settings",
+    "slackWebhook": "Slack Incoming Webhook URL"
+  },
+  "environment_variables": {
+    "BACKEND_URL": "https://your-backend.render.com",
+    "ML_API_URL": "https://your-ml-service.railway.app",
+    "TELEGRAM_CHAT_ID": "@your_channel or chat_id",
+    "SLACK_WEBHOOK_URL": "https://hooks.slack.com/services/YOUR/WEBHOOK/URL",
+    "ALERT_EMAIL": "operator@company.com"
+  }
+}
