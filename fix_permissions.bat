@@ -1,0 +1,6 @@
+@echo off
+echo Untracking node_modules...
+git rm -r --cached node_modules
+echo Committing changes...
+git commit -m "fix: untrack node_modules and fix build config"
+echo Done.
